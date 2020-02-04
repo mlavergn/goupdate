@@ -8,7 +8,7 @@
 
 .PHONY: test
 
-VERSION := 0.0.1
+VERSION := 0.1.0
 
 ver:
 	@sed -i '' 's/^const Version = "[0-9]\{1,3\}.[0-9]\{1,3\}.[0-9]\{1,3\}"/const Version = "${VERSION}"/' src/update/update.go
@@ -36,6 +36,11 @@ test: build
 
 github:
 	open "https://github.com/mlavergn/goupdate"
+
+package:
+	go build -o demo cmd/demo.go
+	zip -r demo-linux-amd64.zip LICENSE README.md demo
+	open "https://github.com/mlavergn/goupdate/releases"
 
 release:
 	zip -r goupdate.zip LICENSE README.md Makefile cmd src

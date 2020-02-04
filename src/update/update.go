@@ -13,12 +13,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
 
 // Version export
-const Version = "0.0.1"
+const Version = "0.1.0"
 
 // DEBUG flag for runtime
 const DEBUG = true
@@ -58,25 +60,32 @@ type Release struct {
 	Assets  []Asset `json:"assets"`
 }
 
-// GoUpdate export
-type GoUpdate struct {
+// Update export
+type Update struct {
 	releaseURL string
+	token      string
 }
 
-// NewGoUpdate export
-func NewGoUpdate(releaseURL string) *GoUpdate {
-	return &GoUpdate{
+// NewUpdate export
+func NewUpdate(releaseURL string) *Update {
+	return &Update{
 		releaseURL: releaseURL,
 	}
 }
 
-var tlsConfigOnce sync.Once
+// NewTokenUpdate export
+func NewTokenUpdate(releaseURL string, token string) *Update {
+	return &Update{
+		releaseURL: releaseURL,
+		token:      token,
+	}
+}
 
-// var tlsConfig *tls.Config
+var tlsConfigOnce sync.Once
 var httpClient *http.Client
 
-func initTLS() {
-	log.Println("GoUpdate.initTLS")
+func (id *Update) initTLS() {
+	log.Println("Update.initTLS")
 	tlsConfigOnce.Do(func() {
 		rootCAs, _ := x509.SystemCertPool()
 		if rootCAs == nil {
@@ -107,15 +116,20 @@ func initTLS() {
 	})
 }
 
-func httpVersion(url string) *Release {
-	log.Println("GoUpdate.httpVersion")
-	initTLS()
+func (id *Update) httpVersion(url string) *Release {
+	log.Println("Update.httpVersion")
+	id.initTLS()
 
 	req, reqErr := http.NewRequest(http.MethodGet, url, nil)
 	if reqErr != nil {
 		log.Println(reqErr)
 		return nil
 	}
+
+	if len(id.token) > 0 {
+		req.Header.Add("Authorization", "token "+id.token)
+	}
+
 	resp, respErr := httpClient.Do(req)
 	if respErr != nil {
 		log.Println(respErr)
@@ -141,15 +155,20 @@ func httpVersion(url string) *Release {
 	return &release
 }
 
-func httpDownload(release Release, fileName string) *os.File {
-	log.Println("GoUpdate.httpDownload")
-	initTLS()
+func (id *Update) httpDownload(release Release, fileName string) *os.File {
+	log.Println("Update.httpDownload")
+	id.initTLS()
 
 	req, reqErr := http.NewRequest(http.MethodGet, release.Assets[0].Download, nil)
 	if reqErr != nil {
 		log.Println(reqErr)
 		return nil
 	}
+
+	if len(id.token) > 0 {
+		req.Header.Add("Authorization", "token "+id.token)
+	}
+
 	resp, respErr := httpClient.Do(req)
 	if respErr != nil {
 		log.Println(respErr)
@@ -160,6 +179,7 @@ func httpDownload(release Release, fileName string) *os.File {
 	defer resp.Body.Close()
 
 	file, tempErr := ioutil.TempFile("", fileName)
+	log.Println("Update.httpDownload downloading to", file.Name())
 	if tempErr != nil {
 		log.Println(tempErr)
 		return nil
@@ -169,57 +189,110 @@ func httpDownload(release Release, fileName string) *os.File {
 	return file
 }
 
-func latestFile(version string) string {
+func executableFile() string {
 	execName, err := os.Executable()
 	if err != nil {
 		log.Println(err)
 		return ""
 	}
 	_, execFile := filepath.Split(execName)
-	return execFile + "-" + version
+	return execFile
 }
 
-// pull version from source of truth
-func (id *GoUpdate) update(current string) bool {
-	log.Println("GoUpdate.update")
+// check latest version from source of truth
+func (id *Update) checkHandler(current string) *Release {
+	log.Println("Update.checkHandler")
 
-	release := httpVersion(id.releaseURL)
+	release := id.httpVersion(id.releaseURL)
 	if release != nil && len(release.Version) > 0 && release.Version > current {
-		file := httpDownload(*release, latestFile(current)+".zip")
-
-		// unzip the packed data
-		stat, _ := file.Stat()
-		zipReader, zipErr := zip.NewReader(file, stat.Size())
-		if zipErr != nil {
-			log.Println("Failed to unzip packed data", zipErr)
-			return false
-		}
-
-		zipFile := zipReader.File[0]
-		src, _ := zipFile.Open()
-		defer src.Close()
-		dest, destErr := os.Create(latestFile(current))
-		if destErr != nil {
-			log.Println("Failed to extract", destErr)
-			return false
-		}
-		io.Copy(dest, src)
-
-		return true
+		return release
 	}
 
-	return false
+	return nil
+}
+
+// download latest version from source of truth
+func (id *Update) updateHandler(release *Release) bool {
+	log.Println("Update.updateHandler")
+
+	file := id.httpDownload(*release, executableFile()+"-"+release.Version+".zip")
+
+	// unzip the packed data
+	stat, _ := file.Stat()
+	zipReader, zipErr := zip.NewReader(file, stat.Size())
+	if zipErr != nil {
+		log.Println("Failed to unzip packed data", zipErr)
+		return false
+	}
+
+	fileName := executableFile()
+	fileNameVer := executableFile() + "-" + release.Version
+	fileNameOS := executableFile() + "-" + runtime.GOOS + "-" + runtime.GOARCH
+	log.Println("Update.updateHandler", fileName, fileNameVer, fileNameOS)
+	var zipFile *zip.File
+	for _, zipEntry := range zipReader.File {
+		if strings.HasSuffix(zipEntry.Name, fileNameOS) {
+			break
+		}
+	}
+	if zipFile == nil {
+		log.Println("Failed to find executable in download bundle", fileName)
+		return false
+	}
+	src, _ := zipFile.Open()
+	defer src.Close()
+	dest, destErr := os.Create(fileNameVer)
+	if destErr != nil {
+		log.Println("Failed to extract", destErr)
+		return false
+	}
+	io.Copy(dest, src)
+
+	// recreate symlink
+	os.Remove(fileName)
+	os.Symlink(fileName, fileNameVer)
+
+	return true
+}
+
+// AutoUpdate export
+func (id *Update) AutoUpdate(version string, intervalMin int) {
+	log.Println("Update.AutoUpdate", version, intervalMin)
+
+	ticker := time.NewTicker(500 * time.Minute)
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				release := id.checkHandler(version)
+				if release != nil {
+					ticker.Stop()
+					id.updateHandler(release)
+				}
+			}
+		}
+	}()
+}
+
+// Update export
+func (id *Update) Update(release *Release) bool {
+	log.Println("Update.Update", release.Version)
+
+	return id.updateHandler(release)
 }
 
 // Check export
-func (id *GoUpdate) Check(version string) {
-	log.Println("GoUpdate.Check", version)
+func (id *Update) Check(version string) *Release {
+	log.Println("Update.Check", version)
 
-	updated := id.update(version)
-
-	if updated {
-		log.Println("Update available")
+	release := id.checkHandler(version)
+	if release != nil {
+		log.Println("Update available", version, release.Assets)
 	} else {
 		log.Println("No update available")
 	}
+	return release
 }
