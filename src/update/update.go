@@ -1,8 +1,11 @@
 package update
 
 import (
+	"archive/zip"
 	"bufio"
-	"fmt"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"io"
 	"io/ioutil"
 	oslog "log"
@@ -10,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -43,30 +47,79 @@ func init() {
 	Config(DEBUG)
 }
 
-func httpVersion(url string) string {
-	if DEBUG {
-		return "1.0.0"
-	}
+// Asset export
+type Asset struct {
+	Download string `json:"browser_download_url"`
+}
 
-	httpTransport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: 10 * time.Second,
-		}).DialContext,
-	}
+// Release export
+type Release struct {
+	Version string  `json:"tag_name"`
+	Assets  []Asset `json:"assets"`
+}
 
-	httpClient := &http.Client{
-		Transport: httpTransport,
+// GoUpdate export
+type GoUpdate struct {
+	releaseURL string
+}
+
+// NewGoUpdate export
+func NewGoUpdate(releaseURL string) *GoUpdate {
+	return &GoUpdate{
+		releaseURL: releaseURL,
 	}
+}
+
+var tlsConfigOnce sync.Once
+
+// var tlsConfig *tls.Config
+var httpClient *http.Client
+
+func initTLS() {
+	log.Println("GoUpdate.initTLS")
+	tlsConfigOnce.Do(func() {
+		rootCAs, _ := x509.SystemCertPool()
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+
+		// currently based on Linux CA location
+		caCert, err := ioutil.ReadFile("/etc/ssl/ca-bundle.crt")
+		if err == nil {
+			rootCAs.AppendCertsFromPEM(caCert)
+		}
+
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: true,
+			RootCAs:            rootCAs,
+		}
+
+		httpTransport := &http.Transport{
+			TLSClientConfig: tlsConfig,
+			DialContext: (&net.Dialer{
+				Timeout: 10 * time.Second,
+			}).DialContext,
+		}
+
+		httpClient = &http.Client{
+			Transport: httpTransport,
+		}
+	})
+}
+
+func httpVersion(url string) *Release {
+	log.Println("GoUpdate.httpVersion")
+	initTLS()
 
 	req, reqErr := http.NewRequest(http.MethodGet, url, nil)
 	if reqErr != nil {
 		log.Println(reqErr)
-		return ""
+		return nil
 	}
 	resp, respErr := httpClient.Do(req)
 	if respErr != nil {
 		log.Println(respErr)
-		return ""
+		return nil
 	}
 
 	reader := bufio.NewReader(resp.Body)
@@ -75,28 +128,24 @@ func httpVersion(url string) string {
 	data, err := ioutil.ReadAll(reader)
 	if err != nil {
 		log.Println(err)
-		return ""
-	}
-
-	return string(data)
-}
-
-func httpDownload(url string, bundle string) *os.File {
-	if true {
 		return nil
 	}
 
-	httpTransport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: 10 * time.Second,
-		}).DialContext,
+	var release Release
+	err = json.Unmarshal(data, &release)
+	if err != nil {
+		log.Println(err)
+		return nil
 	}
 
-	httpClient := &http.Client{
-		Transport: httpTransport,
-	}
+	return &release
+}
 
-	req, reqErr := http.NewRequest(http.MethodGet, url, nil)
+func httpDownload(release Release, fileName string) *os.File {
+	log.Println("GoUpdate.httpDownload")
+	initTLS()
+
+	req, reqErr := http.NewRequest(http.MethodGet, release.Assets[0].Download, nil)
 	if reqErr != nil {
 		log.Println(reqErr)
 		return nil
@@ -110,7 +159,7 @@ func httpDownload(url string, bundle string) *os.File {
 	reader := bufio.NewReader(resp.Body)
 	defer resp.Body.Close()
 
-	file, tempErr := ioutil.TempFile("", bundle)
+	file, tempErr := ioutil.TempFile("", fileName)
 	if tempErr != nil {
 		log.Println(tempErr)
 		return nil
@@ -120,54 +169,57 @@ func httpDownload(url string, bundle string) *os.File {
 	return file
 }
 
-// pull version from source of truth
-func update(current string) string {
-	url := "http://localhost/name/releases/current"
-	ver := httpVersion(url)
-	if len(ver) > 0 && ver > current {
-		return ver
+func latestFile(version string) string {
+	execName, err := os.Executable()
+	if err != nil {
+		log.Println(err)
+		return ""
 	}
-	return ""
+	_, execFile := filepath.Split(execName)
+	return execFile + "-" + version
 }
 
-// download updated version
-func download(file string, version string) *os.File {
-	bundle := file + "-" + version
-	url := "http://localhost/name/releases/" + bundle
-	tmp := httpDownload(url, file+"-"+version)
-	return tmp
-}
+// pull version from source of truth
+func (id *GoUpdate) update(current string) bool {
+	log.Println("GoUpdate.update")
 
-// copy from tmp to working dir
-func install(file *os.File) {
-	os.Rename(file.Name(), "workingDir"+"name-1.0.0")
-}
+	release := httpVersion(id.releaseURL)
+	if release != nil && len(release.Version) > 0 && release.Version > current {
+		file := httpDownload(*release, latestFile(current)+".zip")
 
-// restart the service
-func restart() {
-	// exec.Command
+		// unzip the packed data
+		stat, _ := file.Stat()
+		zipReader, zipErr := zip.NewReader(file, stat.Size())
+		if zipErr != nil {
+			log.Println("Failed to unzip packed data", zipErr)
+			return false
+		}
+
+		zipFile := zipReader.File[0]
+		src, _ := zipFile.Open()
+		defer src.Close()
+		dest, destErr := os.Create(latestFile(current))
+		if destErr != nil {
+			log.Println("Failed to extract", destErr)
+			return false
+		}
+		io.Copy(dest, src)
+
+		return true
+	}
+
+	return false
 }
 
 // Check export
-func Check(current string) {
-	fmt.Println("Update complete")
+func (id *GoUpdate) Check(version string) {
+	log.Println("GoUpdate.Check", version)
 
-	execName, err := os.Executable()
-	if err != nil {
-		fmt.Println(err)
-		return
+	updated := id.update(version)
+
+	if updated {
+		log.Println("Update available")
+	} else {
+		log.Println("No update available")
 	}
-	_, execFile := filepath.Split(execName)
-
-	fmt.Println(execFile)
-
-	if ver := update(current); len(ver) > 0 {
-		file := download(execFile, ver)
-		if file != nil {
-			install(file)
-			restart()
-		}
-	}
-
-	fmt.Println("Update check complete")
 }

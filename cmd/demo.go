@@ -5,8 +5,10 @@ import (
 )
 
 // Version export
-const Version = "0.9.0"
+const Version = "1.3.0"
 
 func main() {
+	url := "https://api.github.com/repos/mlavergn/godaemon/releases/latest"
+	update := update.NewGoUpdate(url)
 	update.Check(Version)
 }
