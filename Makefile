@@ -29,7 +29,7 @@ clean:
 	go clean ...
 
 demo: build
-	go run cmd/demo.go
+	go build -o demo cmd/demo.go
 
 test: build
 	go test -v -count=${COUNT} ./src/...

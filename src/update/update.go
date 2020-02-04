@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,8 @@ func init() {
 
 // Asset export
 type Asset struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
 	Download string `json:"browser_download_url"`
 }
 
@@ -62,22 +65,23 @@ type Release struct {
 
 // Update export
 type Update struct {
-	releaseURL string
-	token      string
+	githubURL string
+	authToken string
 }
 
-// NewUpdate export
-func NewUpdate(releaseURL string) *Update {
+// NewGitHubUpdate export
+func NewGitHubUpdate(owner string, project string, token string) *Update {
 	return &Update{
-		releaseURL: releaseURL,
+		authToken: token,
+		githubURL: "https://api.github.com/repos/" + owner + "/" + project + "/releases",
 	}
 }
 
-// NewTokenUpdate export
-func NewTokenUpdate(releaseURL string, token string) *Update {
+// NewGitHubEnterpriseUpdate export
+func NewGitHubEnterpriseUpdate(host string, owner string, project string, token string) *Update {
 	return &Update{
-		releaseURL: releaseURL,
-		token:      token,
+		authToken: token,
+		githubURL: "https://" + host + "/api/v3/repos/" + owner + "/" + project + "/releases",
 	}
 }
 
@@ -116,18 +120,21 @@ func (id *Update) initTLS() {
 	})
 }
 
-func (id *Update) httpVersion(url string) *Release {
+func (id *Update) httpVersion() *Release {
 	log.Println("Update.httpVersion")
 	id.initTLS()
 
-	req, reqErr := http.NewRequest(http.MethodGet, url, nil)
+	urlString := id.githubURL + "/latest"
+	log.Println("Update.httpVersion url", urlString)
+
+	req, reqErr := http.NewRequest(http.MethodGet, urlString, nil)
 	if reqErr != nil {
 		log.Println(reqErr)
 		return nil
 	}
 
-	if len(id.token) > 0 {
-		req.Header.Add("Authorization", "token "+id.token)
+	if len(id.authToken) > 0 {
+		req.Header.Add("Authorization", "token "+id.authToken)
 	}
 
 	resp, respErr := httpClient.Do(req)
@@ -136,10 +143,10 @@ func (id *Update) httpVersion(url string) *Release {
 		return nil
 	}
 
-	reader := bufio.NewReader(resp.Body)
+	// reader := bufio.NewReader(resp.Body)
 	defer resp.Body.Close()
 
-	data, err := ioutil.ReadAll(reader)
+	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Println(err)
 		return nil
@@ -155,19 +162,39 @@ func (id *Update) httpVersion(url string) *Release {
 	return &release
 }
 
-func (id *Update) httpDownload(release Release, fileName string) *os.File {
+func (id *Update) httpDownload(release *Release, fileName string) *os.File {
 	log.Println("Update.httpDownload")
 	id.initTLS()
 
-	req, reqErr := http.NewRequest(http.MethodGet, release.Assets[0].Download, nil)
+	assetID := -1
+
+	// fileNameOS := fileName + "-" + runtime.GOOS + "-" + runtime.GOARCH
+	fileNameOS := fileName + "-" + "linux" + "-" + runtime.GOARCH + ".zip"
+	for _, asset := range release.Assets {
+		if asset.Name == fileNameOS {
+			assetID = asset.ID
+			break
+		}
+	}
+
+	if assetID == -1 {
+		log.Println("Update.httpDownload filed to locate platform specific asset", fileNameOS)
+		return nil
+	}
+
+	urlString := id.githubURL + "/assets/" + strconv.Itoa(assetID)
+	log.Println("Update.httpDownload url", urlString)
+
+	req, reqErr := http.NewRequest(http.MethodGet, urlString, nil)
 	if reqErr != nil {
 		log.Println(reqErr)
 		return nil
 	}
 
-	if len(id.token) > 0 {
-		req.Header.Add("Authorization", "token "+id.token)
+	if len(id.authToken) > 0 {
+		req.Header.Add("Authorization", "token "+id.authToken)
 	}
+	req.Header.Add("Accept", "application/octet-stream")
 
 	resp, respErr := httpClient.Do(req)
 	if respErr != nil {
@@ -203,7 +230,7 @@ func executableFile() string {
 func (id *Update) checkHandler(current string) *Release {
 	log.Println("Update.checkHandler")
 
-	release := id.httpVersion(id.releaseURL)
+	release := id.httpVersion()
 	if release != nil && len(release.Version) > 0 && release.Version > current {
 		return release
 	}
@@ -215,7 +242,13 @@ func (id *Update) checkHandler(current string) *Release {
 func (id *Update) updateHandler(release *Release) bool {
 	log.Println("Update.updateHandler")
 
-	file := id.httpDownload(*release, executableFile()+"-"+release.Version+".zip")
+	fileName := executableFile()
+	file := id.httpDownload(release, fileName)
+
+	if file == nil {
+		log.Println("Failed to locate platform binary")
+		return false
+	}
 
 	// unzip the packed data
 	stat, _ := file.Stat()
@@ -225,13 +258,10 @@ func (id *Update) updateHandler(release *Release) bool {
 		return false
 	}
 
-	fileName := executableFile()
-	fileNameVer := executableFile() + "-" + release.Version
-	fileNameOS := executableFile() + "-" + runtime.GOOS + "-" + runtime.GOARCH
-	log.Println("Update.updateHandler", fileName, fileNameVer, fileNameOS)
 	var zipFile *zip.File
 	for _, zipEntry := range zipReader.File {
-		if strings.HasSuffix(zipEntry.Name, fileNameOS) {
+		if strings.HasSuffix(zipEntry.Name, fileName) {
+			zipFile = zipEntry
 			break
 		}
 	}
@@ -239,6 +269,8 @@ func (id *Update) updateHandler(release *Release) bool {
 		log.Println("Failed to find executable in download bundle", fileName)
 		return false
 	}
+
+	fileNameVer := fileName + "-" + release.Version
 	src, _ := zipFile.Open()
 	defer src.Close()
 	dest, destErr := os.Create(fileNameVer)
@@ -249,11 +281,14 @@ func (id *Update) updateHandler(release *Release) bool {
 	io.Copy(dest, src)
 
 	// recreate symlink
+	log.Println(fileName, fileNameVer)
 	os.Remove(fileName)
-	os.Symlink(fileName, fileNameVer)
+	os.Symlink(fileNameVer, fileName)
 
 	return true
 }
+
+// Public APIs
 
 // AutoUpdate export
 func (id *Update) AutoUpdate(version string, intervalMin int) {
@@ -290,7 +325,7 @@ func (id *Update) Check(version string) *Release {
 
 	release := id.checkHandler(version)
 	if release != nil {
-		log.Println("Update available", version, release.Assets)
+		log.Println("Update available", release.Version)
 	} else {
 		log.Println("No update available")
 	}

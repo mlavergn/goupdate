@@ -10,13 +10,14 @@ import (
 const Version = "0.9.0"
 
 func main() {
-	url := "https://api.github.com/repos/mlavergn/godaemon/releases/latest"
-	update := update.NewUpdate(url)
+	update := update.NewGitHubUpdate("mlavergn", "godaemon", "")
 	release := update.Check(Version)
 	if release != nil {
 		result := update.Update(release)
 		log.Println("Udpated, restart required", result)
 	}
+
+	// check for update every X minutes
 	// update.AutoUpdate(Version, 1)
 	<-time.After(5 * time.Minute)
 }
