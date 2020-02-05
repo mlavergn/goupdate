@@ -20,6 +20,9 @@ import (
 	"time"
 )
 
+// ----------------------------------------------------------------------------
+// init
+
 // Version export
 const Version = "0.1.0"
 
@@ -50,21 +53,84 @@ func init() {
 	Config(DEBUG)
 }
 
-// Asset export
-type Asset struct {
+// ----------------------------------------------------------------------------
+// Sematic versioning
+
+// SemanticVersion export
+type SemanticVersion struct {
+	Major int
+	Minor int
+	Patch int
+}
+
+// NewSemanticVersion export
+func NewSemanticVersion(version string) *SemanticVersion {
+	ver := strings.TrimLeft(version, " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.")
+	ver = strings.TrimRight(ver, " -abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	parts := strings.Split(ver, ".")
+	if len(parts) < 3 {
+		return nil
+	}
+	result := &SemanticVersion{
+		Major: 0,
+		Minor: 0,
+		Patch: 0,
+	}
+	for i, part := range parts {
+		value, _ := strconv.Atoi(part)
+		switch i {
+		case 0:
+			result.Major = value
+		case 1:
+			result.Minor = value
+		case 2:
+			result.Patch = value
+		}
+	}
+	if result.Major == 0 && result.Minor == 0 && result.Patch == 0 {
+		return nil
+	}
+	return result
+}
+
+// IsLessThan export
+func (id *SemanticVersion) IsLessThan(version *SemanticVersion) bool {
+	if id.Major < version.Major {
+		return true
+	}
+	if id.Major == version.Major && id.Minor < version.Minor {
+		return true
+	}
+	if id.Major == version.Major && id.Minor == version.Minor && id.Patch < version.Patch {
+		return true
+	}
+	return false
+}
+
+// ----------------------------------------------------------------------------
+// GitHub types
+
+// GitHubAsset export
+type GitHubAsset struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
 	Download string `json:"browser_download_url"`
 }
 
-// Release export
-type Release struct {
-	Version string  `json:"tag_name"`
-	Assets  []Asset `json:"assets"`
+// GitHubRelease export
+type GitHubRelease struct {
+	Version string        `json:"tag_name"`
+	Assets  []GitHubAsset `json:"assets"`
 }
+
+// ----------------------------------------------------------------------------
+// GoUpdate
 
 // Update export
 type Update struct {
+	tlsConfigOnce sync.Once
+	httpClient    *http.Client
+
 	githubURL string
 	authToken string
 }
@@ -85,18 +151,16 @@ func NewGitHubEnterpriseUpdate(host string, owner string, project string, token 
 	}
 }
 
-var tlsConfigOnce sync.Once
-var httpClient *http.Client
-
+// TLS intialization is expensive and can be reused safely
 func (id *Update) initTLS() {
 	log.Println("Update.initTLS")
-	tlsConfigOnce.Do(func() {
+	id.tlsConfigOnce.Do(func() {
 		rootCAs, _ := x509.SystemCertPool()
 		if rootCAs == nil {
 			rootCAs = x509.NewCertPool()
 		}
 
-		// currently based on Linux CA location
+		// based on UNIX CA file location
 		caCert, err := ioutil.ReadFile("/etc/ssl/ca-bundle.crt")
 		if err == nil {
 			rootCAs.AppendCertsFromPEM(caCert)
@@ -114,45 +178,48 @@ func (id *Update) initTLS() {
 			}).DialContext,
 		}
 
-		httpClient = &http.Client{
+		id.httpClient = &http.Client{
 			Transport: httpTransport,
 		}
 	})
 }
 
-func (id *Update) httpVersion() *Release {
+// httpVersion reads the release JSON for the latest release of
+// of the owner:project provided at initialization
+func (id *Update) httpVersion() *GitHubRelease {
 	log.Println("Update.httpVersion")
 	id.initTLS()
 
+	// generate the request
 	urlString := id.githubURL + "/latest"
-	log.Println("Update.httpVersion url", urlString)
-
 	req, reqErr := http.NewRequest(http.MethodGet, urlString, nil)
 	if reqErr != nil {
 		log.Println(reqErr)
 		return nil
 	}
 
+	// generate the request
 	if len(id.authToken) > 0 {
 		req.Header.Add("Authorization", "token "+id.authToken)
 	}
 
-	resp, respErr := httpClient.Do(req)
+	// perform the request
+	resp, respErr := id.httpClient.Do(req)
 	if respErr != nil {
 		log.Println(respErr)
 		return nil
 	}
-
-	// reader := bufio.NewReader(resp.Body)
 	defer resp.Body.Close()
 
+	// read the response body
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Println(err)
 		return nil
 	}
 
-	var release Release
+	// unmarshal the JSON response
+	var release GitHubRelease
 	err = json.Unmarshal(data, &release)
 	if err != nil {
 		log.Println(err)
@@ -162,14 +229,15 @@ func (id *Update) httpVersion() *Release {
 	return &release
 }
 
-func (id *Update) httpDownload(release *Release, fileName string) *os.File {
+// httpDownload parses  the release JSON for the latest release of
+// of the owner:project provided at initialization
+func (id *Update) httpDownload(release *GitHubRelease, fileName string) *os.File {
 	log.Println("Update.httpDownload")
 	id.initTLS()
 
 	assetID := -1
 
-	// fileNameOS := fileName + "-" + runtime.GOOS + "-" + runtime.GOARCH
-	fileNameOS := fileName + "-" + "linux" + "-" + runtime.GOARCH + ".zip"
+	fileNameOS := fileName + "-" + runtime.GOOS + "-" + runtime.GOARCH + ".zip"
 	for _, asset := range release.Assets {
 		if asset.Name == fileNameOS {
 			assetID = asset.ID
@@ -196,7 +264,7 @@ func (id *Update) httpDownload(release *Release, fileName string) *os.File {
 	}
 	req.Header.Add("Accept", "application/octet-stream")
 
-	resp, respErr := httpClient.Do(req)
+	resp, respErr := id.httpClient.Do(req)
 	if respErr != nil {
 		log.Println(respErr)
 		return nil
@@ -216,7 +284,7 @@ func (id *Update) httpDownload(release *Release, fileName string) *os.File {
 	return file
 }
 
-func executableFile() string {
+func (id *Update) executableFile() string {
 	execName, err := os.Executable()
 	if err != nil {
 		log.Println(err)
@@ -226,23 +294,43 @@ func executableFile() string {
 	return execFile
 }
 
-// check latest version from source of truth
-func (id *Update) checkHandler(current string) *Release {
+// Check obtains the latest release version from GitHub
+func (id *Update) Check(current string) *GitHubRelease {
 	log.Println("Update.checkHandler")
 
+	currentVer := NewSemanticVersion(current)
+	if currentVer == nil {
+		log.Println("Failed to generate semantic version for", current)
+		return nil
+	}
 	release := id.httpVersion()
-	if release != nil && len(release.Version) > 0 && release.Version > current {
+	if release == nil {
+		log.Println("Failed to obtain release info")
+		return nil
+	}
+	releaseVer := NewSemanticVersion(release.Version)
+	if releaseVer == nil {
+		log.Println("Failed to generate semantic version for", current)
+		return nil
+	}
+
+	log.Println(currentVer, releaseVer)
+
+	if currentVer.IsLessThan(releaseVer) {
+		log.Println("Update available", release.Version)
 		return release
+	} else {
+		log.Println(current, "is the latest version available")
 	}
 
 	return nil
 }
 
-// download latest version from source of truth
-func (id *Update) updateHandler(release *Release) bool {
+// Update obtains the latest release binary from GitHub and writes it to disk
+func (id *Update) Update(release *GitHubRelease) bool {
 	log.Println("Update.updateHandler")
 
-	fileName := executableFile()
+	fileName := id.executableFile()
 	file := id.httpDownload(release, fileName)
 
 	if file == nil {
@@ -288,8 +376,6 @@ func (id *Update) updateHandler(release *Release) bool {
 	return true
 }
 
-// Public APIs
-
 // AutoUpdate export
 func (id *Update) AutoUpdate(version string, intervalMin int) {
 	log.Println("Update.AutoUpdate", version, intervalMin)
@@ -302,32 +388,12 @@ func (id *Update) AutoUpdate(version string, intervalMin int) {
 			case <-done:
 				return
 			case <-ticker.C:
-				release := id.checkHandler(version)
+				release := id.Check(version)
 				if release != nil {
 					ticker.Stop()
-					id.updateHandler(release)
+					id.Update(release)
 				}
 			}
 		}
 	}()
-}
-
-// Update export
-func (id *Update) Update(release *Release) bool {
-	log.Println("Update.Update", release.Version)
-
-	return id.updateHandler(release)
-}
-
-// Check export
-func (id *Update) Check(version string) *Release {
-	log.Println("Update.Check", version)
-
-	release := id.checkHandler(version)
-	if release != nil {
-		log.Println("Update available", release.Version)
-	} else {
-		log.Println("No update available")
-	}
-	return release
 }
