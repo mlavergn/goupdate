@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.2.0"
+const Version = "0.3.0"
 
 // DEBUG flag for runtime
 const DEBUG = true
@@ -197,6 +197,7 @@ func (id *Update) httpVersion() *GitHubRelease {
 		log.Println(reqErr)
 		return nil
 	}
+	req.Header.Set("Connection", "close")
 
 	// generate the request
 	if len(id.authToken) > 0 {
@@ -258,6 +259,7 @@ func (id *Update) httpDownload(release *GitHubRelease, fileName string) *os.File
 		log.Println(reqErr)
 		return nil
 	}
+	req.Header.Set("Connection", "close")
 
 	if len(id.authToken) > 0 {
 		req.Header.Add("Authorization", "token "+id.authToken)
@@ -331,6 +333,7 @@ func (id *Update) Update(release *GitHubRelease) bool {
 
 	fileName := id.executableFile()
 	file := id.httpDownload(release, fileName)
+	defer file.Close()
 
 	if file == nil {
 		log.Println("Failed to locate platform binary")
