@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/mlavergn/goupdate/src/update"
 	"log"
 	"time"
+
+	"github.com/mlavergn/goupdate/src/update"
 )
 
 // Version export
@@ -18,6 +19,9 @@ func main() {
 	}
 
 	// check for update every X minutes
-	// update.AutoUpdate(Version, 1)
+	// update.AutoUpdate(Version, 1, func(version string) {
+	// 	log.Println("Update ready")
+	// 	os.Exit(0)
+	// })
 	<-time.After(5 * time.Minute)
 }

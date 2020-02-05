@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.1.0"
+const Version = "0.2.0"
 
 // DEBUG flag for runtime
 const DEBUG = true
@@ -319,10 +319,9 @@ func (id *Update) Check(current string) *GitHubRelease {
 	if currentVer.IsLessThan(releaseVer) {
 		log.Println("Update available", release.Version)
 		return release
-	} else {
-		log.Println(current, "is the latest version available")
 	}
 
+	log.Println("No update available")
 	return nil
 }
 
@@ -377,21 +376,21 @@ func (id *Update) Update(release *GitHubRelease) bool {
 }
 
 // AutoUpdate export
-func (id *Update) AutoUpdate(version string, intervalMin int) {
+func (id *Update) AutoUpdate(version string, intervalMin int, fn func(string)) {
 	log.Println("Update.AutoUpdate", version, intervalMin)
 
 	ticker := time.NewTicker(500 * time.Minute)
-	done := make(chan bool)
 	go func() {
 		for {
 			select {
-			case <-done:
-				return
 			case <-ticker.C:
 				release := id.Check(version)
 				if release != nil {
 					ticker.Stop()
 					id.Update(release)
+					if fn != nil {
+						fn(release.Version)
+					}
 				}
 			}
 		}
