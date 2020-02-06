@@ -19,7 +19,7 @@ func main() {
 	}
 
 	// check for update every X minutes
-	// update.AutoUpdate(Version, 1, func(version string) {
+	// update.AutoUpdate(Version, 1*time.Minute, func(version string) {
 	// 	log.Println("Update ready")
 	// 	os.Exit(0)
 	// })

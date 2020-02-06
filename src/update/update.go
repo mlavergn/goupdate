@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.3.0"
+const Version = "0.3.1"
 
 // DEBUG flag for runtime
 const DEBUG = true
@@ -379,10 +379,10 @@ func (id *Update) Update(release *GitHubRelease) bool {
 }
 
 // AutoUpdate export
-func (id *Update) AutoUpdate(version string, intervalMin int, fn func(string)) {
-	log.Println("Update.AutoUpdate", version, intervalMin)
+func (id *Update) AutoUpdate(version string, interval time.Duration, fn func(string)) {
+	log.Println("Update.AutoUpdate", version, interval)
 
-	ticker := time.NewTicker(500 * time.Minute)
+	ticker := time.NewTicker(interval)
 	go func() {
 		for {
 			select {
