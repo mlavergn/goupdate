@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.3.2"
+const Version = "0.3.3"
 
 // DEBUG flag
 const DEBUG = false
@@ -404,15 +404,12 @@ func (id *Update) Update(release *GitHubRelease) bool {
 // RemoveVersion export
 func (id *Update) RemoveVersion(version SemanticVersion) {
 	// remove old file
-	dir, wdErr := os.Getwd()
-	if wdErr == nil {
-		cwdFiles, cwdErr := ioutil.ReadDir(".")
-		if cwdErr == nil {
-			for _, cwdFile := range cwdFiles {
-				if cwdFile.Name() == version.QualifiedName() {
-					dlog.Println("Removing", cwdFile.Name())
-					os.Remove(cwdFile.Name())
-				}
+	cwdFiles, cwdErr := ioutil.ReadDir(".")
+	if cwdErr == nil {
+		for _, cwdFile := range cwdFiles {
+			if cwdFile.Name() == version.QualifiedName() {
+				dlog.Println("Removing", cwdFile.Name())
+				os.Remove(cwdFile.Name())
 			}
 		}
 	}
