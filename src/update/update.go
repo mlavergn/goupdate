@@ -24,33 +24,37 @@ import (
 // init
 
 // Version export
-const Version = "0.3.1"
+const Version = "0.3.2"
 
-// DEBUG flag for runtime
-const DEBUG = true
+// DEBUG flag
+const DEBUG = false
 
 // stand-in for system logger
 var log *oslog.Logger
 
 // debug logger
 var dlog *oslog.Logger
-var dfilter *string
-
-// null logger
-var lognull *oslog.Logger
 
 // Config export
-func Config(debug bool) {
+func Config(debug bool, logger *oslog.Logger) {
+	if logger != nil {
+		log = logger
+		if debug {
+			dlog = logger
+		}
+		return
+	}
+
+	log = oslog.New(os.Stderr, "GoUpdate ", oslog.Ltime|oslog.Lshortfile)
 	if debug {
-		log = oslog.New(os.Stderr, "GoUpdate ", oslog.Ltime|oslog.Lshortfile)
+		dlog = oslog.New(os.Stdout, "GoUpdate ", oslog.Ltime|oslog.Lshortfile)
 	} else {
-		log = lognull
+		dlog = oslog.New(ioutil.Discard, "", 0)
 	}
 }
 
 func init() {
-	lognull = oslog.New(ioutil.Discard, "", 0)
-	Config(DEBUG)
+	Config(DEBUG, nil)
 }
 
 // ----------------------------------------------------------------------------
@@ -58,6 +62,7 @@ func init() {
 
 // SemanticVersion export
 type SemanticVersion struct {
+	Name  string
 	Major int
 	Minor int
 	Patch int
@@ -90,7 +95,27 @@ func NewSemanticVersion(version string) *SemanticVersion {
 	if result.Major == 0 && result.Minor == 0 && result.Patch == 0 {
 		return nil
 	}
+
+	// isoalte the executable name
+	execName, err := os.Executable()
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+	_, execFile := filepath.Split(execName)
+	result.Name = execFile
+
 	return result
+}
+
+// QualifiedName export
+func (id *SemanticVersion) QualifiedName() string {
+	return id.Name + "-" + strconv.Itoa(id.Major) + "." + strconv.Itoa(id.Minor) + "." + strconv.Itoa(id.Patch)
+}
+
+// PlatformArchive export
+func (id *SemanticVersion) PlatformArchive() string {
+	return id.Name + "-" + runtime.GOOS + "-" + runtime.GOARCH + ".zip"
 }
 
 // IsLessThan export
@@ -119,8 +144,9 @@ type GitHubAsset struct {
 
 // GitHubRelease export
 type GitHubRelease struct {
-	Version string        `json:"tag_name"`
-	Assets  []GitHubAsset `json:"assets"`
+	Version         string        `json:"tag_name"`
+	Assets          []GitHubAsset `json:"assets"`
+	SemanticVersion SemanticVersion
 }
 
 // ----------------------------------------------------------------------------
@@ -153,7 +179,7 @@ func NewGitHubEnterpriseUpdate(host string, owner string, project string, token 
 
 // TLS intialization is expensive and can be reused safely
 func (id *Update) initTLS() {
-	log.Println("Update.initTLS")
+	dlog.Println("Update.initTLS")
 	id.tlsConfigOnce.Do(func() {
 		rootCAs, _ := x509.SystemCertPool()
 		if rootCAs == nil {
@@ -187,7 +213,7 @@ func (id *Update) initTLS() {
 // httpVersion reads the release JSON for the latest release of
 // of the owner:project provided at initialization
 func (id *Update) httpVersion() *GitHubRelease {
-	log.Println("Update.httpVersion")
+	dlog.Println("Update.httpVersion")
 	id.initTLS()
 
 	// generate the request
@@ -227,18 +253,20 @@ func (id *Update) httpVersion() *GitHubRelease {
 		return nil
 	}
 
+	release.SemanticVersion = *NewSemanticVersion(release.Version)
+
 	return &release
 }
 
 // httpDownload parses  the release JSON for the latest release of
 // of the owner:project provided at initialization
-func (id *Update) httpDownload(release *GitHubRelease, fileName string) *os.File {
-	log.Println("Update.httpDownload")
+func (id *Update) httpDownload(release *GitHubRelease) *os.File {
+	dlog.Println("Update.httpDownload")
 	id.initTLS()
 
 	assetID := -1
 
-	fileNameOS := fileName + "-" + runtime.GOOS + "-" + runtime.GOARCH + ".zip"
+	fileNameOS := release.SemanticVersion.PlatformArchive()
 	for _, asset := range release.Assets {
 		if asset.Name == fileNameOS {
 			assetID = asset.ID
@@ -247,7 +275,7 @@ func (id *Update) httpDownload(release *GitHubRelease, fileName string) *os.File
 	}
 
 	if assetID == -1 {
-		log.Println("Update.httpDownload filed to locate platform specific asset", fileNameOS)
+		log.Println("Update.httpDownload failed to locate platform specific asset", fileNameOS)
 		return nil
 	}
 
@@ -275,7 +303,7 @@ func (id *Update) httpDownload(release *GitHubRelease, fileName string) *os.File
 	reader := bufio.NewReader(resp.Body)
 	defer resp.Body.Close()
 
-	file, tempErr := ioutil.TempFile("", fileName)
+	file, tempErr := ioutil.TempFile("", release.SemanticVersion.Name)
 	log.Println("Update.httpDownload downloading to", file.Name())
 	if tempErr != nil {
 		log.Println(tempErr)
@@ -286,25 +314,10 @@ func (id *Update) httpDownload(release *GitHubRelease, fileName string) *os.File
 	return file
 }
 
-func (id *Update) executableFile() string {
-	execName, err := os.Executable()
-	if err != nil {
-		log.Println(err)
-		return ""
-	}
-	_, execFile := filepath.Split(execName)
-	return execFile
-}
-
 // Check obtains the latest release version from GitHub
-func (id *Update) Check(current string) *GitHubRelease {
-	log.Println("Update.checkHandler")
+func (id *Update) Check(currentVer SemanticVersion) *GitHubRelease {
+	dlog.Println("Update.Check")
 
-	currentVer := NewSemanticVersion(current)
-	if currentVer == nil {
-		log.Println("Failed to generate semantic version for", current)
-		return nil
-	}
 	release := id.httpVersion()
 	if release == nil {
 		log.Println("Failed to obtain release info")
@@ -312,11 +325,10 @@ func (id *Update) Check(current string) *GitHubRelease {
 	}
 	releaseVer := NewSemanticVersion(release.Version)
 	if releaseVer == nil {
-		log.Println("Failed to generate semantic version for", current)
+		log.Println("Failed to generate semantic version for", release)
 		return nil
 	}
-
-	log.Println(currentVer, releaseVer)
+	release.SemanticVersion = *releaseVer
 
 	if currentVer.IsLessThan(releaseVer) {
 		log.Println("Update available", release.Version)
@@ -329,10 +341,9 @@ func (id *Update) Check(current string) *GitHubRelease {
 
 // Update obtains the latest release binary from GitHub and writes it to disk
 func (id *Update) Update(release *GitHubRelease) bool {
-	log.Println("Update.updateHandler")
+	dlog.Println("Update.Update")
 
-	fileName := id.executableFile()
-	file := id.httpDownload(release, fileName)
+	file := id.httpDownload(release)
 	defer file.Close()
 
 	if file == nil {
@@ -348,6 +359,7 @@ func (id *Update) Update(release *GitHubRelease) bool {
 		return false
 	}
 
+	fileName := release.SemanticVersion.Name
 	var zipFile *zip.File
 	for _, zipEntry := range zipReader.File {
 		if strings.HasSuffix(zipEntry.Name, fileName) {
@@ -360,7 +372,8 @@ func (id *Update) Update(release *GitHubRelease) bool {
 		return false
 	}
 
-	fileNameVer := fileName + "-" + release.Version
+	// write update to disk
+	fileNameVer := release.SemanticVersion.QualifiedName()
 	src, _ := zipFile.Open()
 	defer src.Close()
 	dest, destErr := os.Create(fileNameVer)
@@ -368,9 +381,19 @@ func (id *Update) Update(release *GitHubRelease) bool {
 		log.Println("Failed to extract", destErr)
 		return false
 	}
+	dlog.Println("Write executable file", fileNameVer)
 	io.Copy(dest, src)
 
+	// make file executable
+	dlog.Println("Set executable flag", fileNameVer)
+	chmodErr := dest.Chmod(0755)
+	if chmodErr != nil {
+		log.Println("Failed to chmod executabke", chmodErr)
+		return false
+	}
+
 	// recreate symlink
+	dlog.Println("Recreate symlink", fileName, fileNameVer)
 	log.Println(fileName, fileNameVer)
 	os.Remove(fileName)
 	os.Symlink(fileNameVer, fileName)
@@ -378,9 +401,26 @@ func (id *Update) Update(release *GitHubRelease) bool {
 	return true
 }
 
+// RemoveVersion export
+func (id *Update) RemoveVersion(version SemanticVersion) {
+	// remove old file
+	dir, wdErr := os.Getwd()
+	if wdErr == nil {
+		cwdFiles, cwdErr := ioutil.ReadDir(".")
+		if cwdErr == nil {
+			for _, cwdFile := range cwdFiles {
+				if cwdFile.Name() == version.QualifiedName() {
+					dlog.Println("Removing", cwdFile.Name())
+					os.Remove(cwdFile.Name())
+				}
+			}
+		}
+	}
+}
+
 // AutoUpdate export
-func (id *Update) AutoUpdate(version string, interval time.Duration, fn func(string)) {
-	log.Println("Update.AutoUpdate", version, interval)
+func (id *Update) AutoUpdate(version SemanticVersion, interval time.Duration, fn func(string)) {
+	dlog.Println("Update.AutoUpdate", version, interval)
 
 	ticker := time.NewTicker(interval)
 	go func() {

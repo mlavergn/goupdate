@@ -11,15 +11,16 @@ import (
 const Version = "0.9.0"
 
 func main() {
-	update := update.NewGitHubUpdate("mlavergn", "godaemon", "")
-	release := update.Check(Version)
+	hubupdate := update.NewGitHubUpdate("mlavergn", "godaemon", "")
+	current := update.NewSemanticVersion(Version)
+	release := hubupdate.Check(*current)
 	if release != nil {
-		result := update.Update(release)
+		result := hubupdate.Update(release)
 		log.Println("Udpated, restart required", result)
 	}
 
 	// check for update every X minutes
-	// update.AutoUpdate(Version, 1*time.Minute, func(version string) {
+	// update.AutoUpdate(current, 1*time.Minute, func(version string) {
 	// 	log.Println("Update ready")
 	// 	os.Exit(0)
 	// })
