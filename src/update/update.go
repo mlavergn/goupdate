@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.3.3"
+const Version = "0.3.4"
 
 // DEBUG flag
 const DEBUG = false
@@ -45,7 +45,7 @@ func Config(debug bool, logger *oslog.Logger) {
 		return
 	}
 
-	log = oslog.New(os.Stderr, "GoUpdate ", oslog.Ltime|oslog.Lshortfile)
+	log = oslog.New(os.Stderr, "", 0)
 	if debug {
 		dlog = oslog.New(os.Stdout, "GoUpdate ", oslog.Ltime|oslog.Lshortfile)
 	} else {
@@ -163,18 +163,20 @@ type Update struct {
 
 // NewGitHubUpdate export
 func NewGitHubUpdate(owner string, project string, token string) *Update {
-	return &Update{
+	id := &Update{
 		authToken: token,
 		githubURL: "https://api.github.com/repos/" + owner + "/" + project + "/releases",
 	}
+	return id
 }
 
 // NewGitHubEnterpriseUpdate export
 func NewGitHubEnterpriseUpdate(host string, owner string, project string, token string) *Update {
-	return &Update{
+	id := &Update{
 		authToken: token,
 		githubURL: "https://" + host + "/api/v3/repos/" + owner + "/" + project + "/releases",
 	}
+	return id
 }
 
 // TLS intialization is expensive and can be reused safely

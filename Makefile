@@ -8,7 +8,7 @@
 
 .PHONY: test
 
-VERSION := 0.3.3
+VERSION := 0.3.4
 
 ver:
 	@sed -i '' 's/^const Version = "[0-9]\{1,3\}.[0-9]\{1,3\}.[0-9]\{1,3\}"/const Version = "${VERSION}"/' src/update/update.go
@@ -32,7 +32,7 @@ demo: build
 	go build -o demo cmd/demo.go
 
 test: build
-	go test -v -count=${COUNT} ./src/...
+	go test -v -count=1 ./src/...
 
 github:
 	open "https://github.com/mlavergn/goupdate"
