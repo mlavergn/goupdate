@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.3.4"
+const Version = "0.4.0"
 
 // DEBUG flag
 const DEBUG = false
@@ -41,6 +41,8 @@ func Config(debug bool, logger *oslog.Logger) {
 		log = logger
 		if debug {
 			dlog = logger
+		} else {
+			dlog = oslog.New(ioutil.Discard, "", 0)
 		}
 		return
 	}
@@ -66,6 +68,7 @@ type SemanticVersion struct {
 	Major int
 	Minor int
 	Patch int
+	Path  string
 }
 
 // NewSemanticVersion export
@@ -76,7 +79,7 @@ func NewSemanticVersion(version string) *SemanticVersion {
 	if len(parts) < 3 {
 		return nil
 	}
-	result := &SemanticVersion{
+	id := &SemanticVersion{
 		Major: 0,
 		Minor: 0,
 		Patch: 0,
@@ -85,48 +88,87 @@ func NewSemanticVersion(version string) *SemanticVersion {
 		value, _ := strconv.Atoi(part)
 		switch i {
 		case 0:
-			result.Major = value
+			id.Major = value
 		case 1:
-			result.Minor = value
+			id.Minor = value
 		case 2:
-			result.Patch = value
+			id.Patch = value
 		}
 	}
-	if result.Major == 0 && result.Minor == 0 && result.Patch == 0 {
+	if id.Major == 0 && id.Minor == 0 && id.Patch == 0 {
 		return nil
 	}
 
-	// isoalte the executable name
-	execName, err := os.Executable()
+	// obtain the executable path
+	fullPath, err := os.Executable()
 	if err != nil {
-		log.Println(err)
+		log.Println("NewSemanticVersion failed to obtain executable path", err)
 		return nil
 	}
-	_, execFile := filepath.Split(execName)
-	result.Name = execFile
 
-	return result
+	// resolve path if we're a symlink
+	realPath, symErr := os.Readlink(fullPath)
+	if symErr == nil {
+		// will fall in here if we resolved a symlink
+		fullPath = realPath
+	}
+
+	// split the executable path and filename
+	basePath, fullName := filepath.Split(fullPath)
+	id.Path = basePath
+
+	if len(basePath) > 0 {
+		cwdPath, err := os.Getwd()
+		if err == nil && strings.HasPrefix(basePath, cwdPath) {
+			basePath = "." + basePath[len(cwdPath):]
+		}
+		id.Path = basePath
+	} else {
+		id.Path = "./"
+	}
+
+	// trim any version tokens from the executable name
+	shortName := fullName
+	suffix := strings.LastIndex(fullName, "-")
+	if suffix != -1 {
+		shortName = shortName[:suffix]
+	}
+
+	// save the short name
+	id.Name = shortName
+
+	return id
 }
 
-// QualifiedName export
-func (id *SemanticVersion) QualifiedName() string {
+// FullName export
+func (id *SemanticVersion) FullName() string {
 	return id.Name + "-" + strconv.Itoa(id.Major) + "." + strconv.Itoa(id.Minor) + "." + strconv.Itoa(id.Patch)
 }
 
-// PlatformArchive export
-func (id *SemanticVersion) PlatformArchive() string {
+// PlatformArchiveName export
+func (id *SemanticVersion) PlatformArchiveName() string {
 	return id.Name + "-" + runtime.GOOS + "-" + runtime.GOARCH + ".zip"
 }
 
-// IsLessThan export
-func (id *SemanticVersion) IsLessThan(version *SemanticVersion) bool {
-	if id.Major < version.Major {
+// FullPath export
+func (id *SemanticVersion) FullPath() string {
+	return id.Path + id.FullName()
+}
+
+// SymlinkPath export
+func (id *SemanticVersion) SymlinkPath() string {
+	return id.Path + id.Name
+}
+
+// IsMoreRecentThan export
+func (id *SemanticVersion) IsMoreRecentThan(version *SemanticVersion) bool {
+	if id.Major > version.Major {
 		return true
 	}
-	if id.Major == version.Major && id.Minor < version.Minor {
+	if id.Major == version.Major && id.Minor > version.Minor {
 		return true
 	}
-	if id.Major == version.Major && id.Minor == version.Minor && id.Patch < version.Patch {
+	if id.Major == version.Major && id.Minor == version.Minor && id.Patch > version.Patch {
 		return true
 	}
 	return false
@@ -222,7 +264,7 @@ func (id *Update) httpVersion() *GitHubRelease {
 	urlString := id.githubURL + "/latest"
 	req, reqErr := http.NewRequest(http.MethodGet, urlString, nil)
 	if reqErr != nil {
-		log.Println(reqErr)
+		log.Println("Update.httpVersion NewRequest failed", reqErr)
 		return nil
 	}
 	req.Header.Set("Connection", "close")
@@ -235,7 +277,7 @@ func (id *Update) httpVersion() *GitHubRelease {
 	// perform the request
 	resp, respErr := id.httpClient.Do(req)
 	if respErr != nil {
-		log.Println(respErr)
+		log.Println("Update.httpVersion Do failed", respErr)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -243,7 +285,7 @@ func (id *Update) httpVersion() *GitHubRelease {
 	// read the response body
 	data, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Println(err)
+		log.Println("Update.httpVersion read failed", err)
 		return nil
 	}
 
@@ -251,7 +293,7 @@ func (id *Update) httpVersion() *GitHubRelease {
 	var release GitHubRelease
 	err = json.Unmarshal(data, &release)
 	if err != nil {
-		log.Println(err)
+		log.Println("Update.httpVersion unmarshall failed", err)
 		return nil
 	}
 
@@ -268,7 +310,7 @@ func (id *Update) httpDownload(release *GitHubRelease) *os.File {
 
 	assetID := -1
 
-	fileNameOS := release.SemanticVersion.PlatformArchive()
+	fileNameOS := release.SemanticVersion.PlatformArchiveName()
 	for _, asset := range release.Assets {
 		if asset.Name == fileNameOS {
 			assetID = asset.ID
@@ -286,7 +328,7 @@ func (id *Update) httpDownload(release *GitHubRelease) *os.File {
 
 	req, reqErr := http.NewRequest(http.MethodGet, urlString, nil)
 	if reqErr != nil {
-		log.Println(reqErr)
+		log.Println("Update.httpDownload NewRequest failed", reqErr)
 		return nil
 	}
 	req.Header.Set("Connection", "close")
@@ -298,7 +340,7 @@ func (id *Update) httpDownload(release *GitHubRelease) *os.File {
 
 	resp, respErr := id.httpClient.Do(req)
 	if respErr != nil {
-		log.Println(respErr)
+		log.Println("Update.httpDownload Do failed", respErr)
 		return nil
 	}
 
@@ -306,50 +348,48 @@ func (id *Update) httpDownload(release *GitHubRelease) *os.File {
 	defer resp.Body.Close()
 
 	file, tempErr := ioutil.TempFile("", release.SemanticVersion.Name)
-	log.Println("Update.httpDownload downloading to", file.Name())
 	if tempErr != nil {
-		log.Println(tempErr)
+		log.Println("Update.httpDownload TempFile failed", tempErr)
 		return nil
 	}
+	log.Println("Update.httpDownload downloading to", file.Name())
 	io.Copy(file, reader)
 
 	return file
 }
 
 // Check obtains the latest release version from GitHub
-func (id *Update) Check(currentVer SemanticVersion) *GitHubRelease {
+func (id *Update) Check(currentVer *SemanticVersion) *GitHubRelease {
 	dlog.Println("Update.Check")
 
 	release := id.httpVersion()
 	if release == nil {
-		log.Println("Failed to obtain release info")
+		log.Println("Update.Check failed to obtain release info")
 		return nil
 	}
 	releaseVer := NewSemanticVersion(release.Version)
 	if releaseVer == nil {
-		log.Println("Failed to generate semantic version for", release)
+		log.Println("Update.Check failed to generate semantic version for", release)
 		return nil
 	}
 	release.SemanticVersion = *releaseVer
 
-	if currentVer.IsLessThan(releaseVer) {
-		log.Println("Update available", release.Version)
+	if releaseVer.IsMoreRecentThan(currentVer) {
 		return release
 	}
 
-	log.Println("No update available")
 	return nil
 }
 
 // Update obtains the latest release binary from GitHub and writes it to disk
-func (id *Update) Update(release *GitHubRelease) bool {
-	dlog.Println("Update.Update")
+func (id *Update) Update(current *SemanticVersion, release *GitHubRelease) bool {
+	dlog.Println("Update.Update", current)
 
 	file := id.httpDownload(release)
 	defer file.Close()
 
 	if file == nil {
-		log.Println("Failed to locate platform binary")
+		log.Println("Update.Update failed to locate platform binary")
 		return false
 	}
 
@@ -357,81 +397,95 @@ func (id *Update) Update(release *GitHubRelease) bool {
 	stat, _ := file.Stat()
 	zipReader, zipErr := zip.NewReader(file, stat.Size())
 	if zipErr != nil {
-		log.Println("Failed to unzip packed data", zipErr)
+		log.Println("Update.Update failed to unzip packed data", zipErr)
 		return false
 	}
 
-	fileName := release.SemanticVersion.Name
+	// assumption:
+	// - name in archive will be non-versioned (eg. demo, not demo-1.0.0)
+	shortName := release.SemanticVersion.Name
 	var zipFile *zip.File
 	for _, zipEntry := range zipReader.File {
-		if strings.HasSuffix(zipEntry.Name, fileName) {
+		if strings.HasSuffix(zipEntry.Name, shortName) {
 			zipFile = zipEntry
 			break
 		}
 	}
 	if zipFile == nil {
-		log.Println("Failed to find executable in download bundle", fileName)
+		log.Println("Update.Update failed to find executable in archive", shortName)
 		return false
 	}
 
 	// write update to disk
-	fileNameVer := release.SemanticVersion.QualifiedName()
+	updateFullPath := release.SemanticVersion.FullPath()
 	src, _ := zipFile.Open()
 	defer src.Close()
-	dest, destErr := os.Create(fileNameVer)
+	dest, destErr := os.Create(updateFullPath)
 	if destErr != nil {
-		log.Println("Failed to extract", destErr)
+		log.Println("Update.Update failed to extract", destErr)
 		return false
 	}
-	dlog.Println("Write executable file", fileNameVer)
+	dlog.Println("Write executable file", updateFullPath)
 	io.Copy(dest, src)
 
 	// make file executable
-	dlog.Println("Set executable flag", fileNameVer)
+	dlog.Println("Update.Update set executable flag", updateFullPath)
 	chmodErr := dest.Chmod(0755)
 	if chmodErr != nil {
-		log.Println("Failed to chmod executabke", chmodErr)
+		log.Println("Update.Update failed to chmod executable", chmodErr)
 		return false
 	}
 
-	// recreate symlink
-	dlog.Println("Recreate symlink", fileName, fileNameVer)
-	log.Println(fileName, fileNameVer)
-	os.Remove(fileName)
-	os.Symlink(fileNameVer, fileName)
+	// recreate symlink if it exists
+	symlinkPath := current.SymlinkPath()
+	stat, err := os.Lstat(symlinkPath)
+	if err == nil && stat.Mode()&os.ModeSymlink != 0 {
+		dlog.Println("Update.Update recreate symlink", shortName, updateFullPath)
+		remErr := os.Remove(symlinkPath)
+		if remErr != nil {
+			log.Println("Update.Update failed to remove symlink", remErr)
+		}
+		symErr := os.Symlink(release.SemanticVersion.FullPath(), symlinkPath)
+		if symErr != nil {
+			log.Println("Update.Update failed to create symlink", symErr)
+		}
+	}
 
 	return true
 }
 
 // RemoveVersion export
-func (id *Update) RemoveVersion(version SemanticVersion) {
+func (id *Update) RemoveVersion(version *SemanticVersion) {
 	// remove old file
 	cwdFiles, cwdErr := ioutil.ReadDir(".")
 	if cwdErr == nil {
 		for _, cwdFile := range cwdFiles {
-			if cwdFile.Name() == version.QualifiedName() {
-				dlog.Println("Removing", cwdFile.Name())
+			if cwdFile.Name() == version.FullName() {
+				dlog.Println("Update.RemoveVersion removing", cwdFile.Name())
 				os.Remove(cwdFile.Name())
+				break
 			}
 		}
 	}
 }
 
 // AutoUpdate export
-func (id *Update) AutoUpdate(version SemanticVersion, interval time.Duration, fn func(string)) {
-	dlog.Println("Update.AutoUpdate", version, interval)
+func (id *Update) AutoUpdate(current *SemanticVersion, interval time.Duration, fn func(release *SemanticVersion)) {
+	dlog.Println("Update.AutoUpdate", *current, interval)
 
 	ticker := time.NewTicker(interval)
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				release := id.Check(version)
+				release := id.Check(current)
 				if release != nil {
+					log.Println("auto-update new version available", release.SemanticVersion.FullName())
 					ticker.Stop()
-					id.Update(release)
+					id.Update(current, release)
+					log.Println("auto-update new version installed", release.SemanticVersion.FullPath())
 					if fn != nil {
-						fn(release.Version)
+						fn(&release.SemanticVersion)
 					}
 				}
 			}
