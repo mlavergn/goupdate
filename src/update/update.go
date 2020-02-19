@@ -188,6 +188,7 @@ type GitHubAsset struct {
 type GitHubRelease struct {
 	Version         string        `json:"tag_name"`
 	Assets          []GitHubAsset `json:"assets"`
+	Prerelease      bool          `json:"prerelease"`
 	SemanticVersion SemanticVersion
 }
 
@@ -198,25 +199,27 @@ type GitHubRelease struct {
 type Update struct {
 	tlsConfigOnce sync.Once
 	httpClient    *http.Client
-
-	githubURL string
-	authToken string
+	prerelease    bool
+	githubURL     string
+	authToken     string
 }
 
 // NewGitHubUpdate export
-func NewGitHubUpdate(owner string, project string, token string) *Update {
+func NewGitHubUpdate(owner string, project string, token string, prerelease bool) *Update {
 	id := &Update{
-		authToken: token,
-		githubURL: "https://api.github.com/repos/" + owner + "/" + project + "/releases",
+		prerelease: prerelease,
+		githubURL:  "https://api.github.com/repos/" + owner + "/" + project + "/releases",
+		authToken:  token,
 	}
 	return id
 }
 
 // NewGitHubEnterpriseUpdate export
-func NewGitHubEnterpriseUpdate(host string, owner string, project string, token string) *Update {
+func NewGitHubEnterpriseUpdate(host string, owner string, project string, token string, prerelease bool) *Update {
 	id := &Update{
-		authToken: token,
-		githubURL: "https://" + host + "/api/v3/repos/" + owner + "/" + project + "/releases",
+		prerelease: prerelease,
+		githubURL:  "https://" + host + "/api/v3/repos/" + owner + "/" + project + "/releases",
+		authToken:  token,
 	}
 	return id
 }
@@ -367,6 +370,13 @@ func (id *Update) Check(currentVer *SemanticVersion) *GitHubRelease {
 		log.Println("Update.Check failed to obtain release info")
 		return nil
 	}
+
+	// check if latests is prerelease and if so, do we accept prereleases
+	if release.Prerelease && !id.prerelease {
+		log.Println("Update.Check latest is prerelease but prerelease not enabled")
+		return nil
+	}
+
 	releaseVer := NewSemanticVersion(release.Version)
 	if releaseVer == nil {
 		log.Println("Update.Check failed to generate semantic version for", release)
@@ -482,7 +492,10 @@ func (id *Update) AutoUpdate(current *SemanticVersion, interval time.Duration, f
 				if release != nil {
 					log.Println("auto-update new version available", release.SemanticVersion.FullName())
 					ticker.Stop()
-					id.Update(current, release)
+					if !id.Update(current, release) {
+						log.Println("auto-update new version installation failed, aborting")
+						return
+					}
 					log.Println("auto-update new version installed", release.SemanticVersion.FullPath())
 					if fn != nil {
 						fn(&release.SemanticVersion)

@@ -30,7 +30,7 @@ func autoupdate(updater *update.Update, current *update.SemanticVersion) {
 
 func main() {
 	current := update.NewSemanticVersion(Version)
-	updater := update.NewGitHubUpdate("mlavergn", "godaemon", "")
+	updater := update.NewGitHubUpdate("mlavergn", "godaemon", "", false)
 	check(updater, current)
 	// autoupdate(update, current)
 
