@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.5.3"
+const Version = "0.5.4"
 
 // DEBUG flag
 const DEBUG = false
@@ -496,7 +496,7 @@ func (id *Update) RemoveVersion(version *SemanticVersion) {
 }
 
 // AutoUpdate export
-func (id *Update) AutoUpdate(current *SemanticVersion, interval time.Duration, fn func(release *SemanticVersion)) {
+func (id *Update) AutoUpdate(current *SemanticVersion, interval time.Duration, restartFunc func(release *SemanticVersion)) {
 	dlog.Println("Update.AutoUpdate", *current, interval)
 
 	ticker := time.NewTicker(interval)
@@ -507,14 +507,14 @@ func (id *Update) AutoUpdate(current *SemanticVersion, interval time.Duration, f
 				release := id.Check(current)
 				if release != nil {
 					log.Println("auto-update new version available", release.SemanticVersion.FullName())
-					ticker.Stop()
 					if !id.Update(current, release) {
 						log.Println("auto-update new version installation failed, aborting")
 						return
 					}
 					log.Println("auto-update new version installed", release.SemanticVersion.FullPath())
-					if fn != nil {
-						fn(&release.SemanticVersion)
+					if restartFunc != nil {
+						ticker.Stop()
+						restartFunc(&release.SemanticVersion)
 					}
 				}
 			}
