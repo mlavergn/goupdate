@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.5.2"
+const Version = "0.5.3"
 
 // DEBUG flag
 const DEBUG = false
@@ -427,32 +427,40 @@ func (id *Update) Update(current *SemanticVersion, release *GitHubRelease) bool 
 	}
 
 	// open the zip file for reading
-	src, _ := zipFile.Open()
-	defer src.Close()
+	src, srcErr := zipFile.Open()
+	if srcErr != nil {
+		log.Println("Update.Update failed to open", srcErr)
+		return false
+	}
 
 	// open the disk file for writing
 	updateFullPath := release.SemanticVersion.FullPath()
 	dest, destErr := os.Create(updateFullPath)
 	if destErr != nil {
 		log.Println("Update.Update failed to extract", destErr)
+		src.Close()
 		return false
 	}
 
 	// pipe zip to disk
 	dlog.Println("Write executable file", updateFullPath)
 	io.Copy(dest, src)
-
-	// sync and close
 	dest.Sync()
-	dest.Close()
+
+	// close src
+	src.Close()
 
 	// make file executable
 	dlog.Println("Update.Update set executable flag", updateFullPath)
 	chmodErr := dest.Chmod(0755)
 	if chmodErr != nil {
 		log.Println("Update.Update failed to chmod executable", chmodErr)
+		dest.Close()
 		return false
 	}
+
+	// close dest
+	dest.Close()
 
 	// recreate symlink if it exists
 	symlinkPath := current.SymlinkPath()
