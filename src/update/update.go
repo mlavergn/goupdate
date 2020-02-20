@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.5.0"
+const Version = "0.5.1"
 
 // DEBUG flag
 const DEBUG = false
@@ -426,15 +426,20 @@ func (id *Update) Update(current *SemanticVersion, release *GitHubRelease) bool 
 		return false
 	}
 
-	// write update to disk
-	updateFullPath := release.SemanticVersion.FullPath()
+	// open the zip file for reading
 	src, _ := zipFile.Open()
 	defer src.Close()
+
+	// open the disk file for writing
+	updateFullPath := release.SemanticVersion.FullPath()
 	dest, destErr := os.Create(updateFullPath)
 	if destErr != nil {
 		log.Println("Update.Update failed to extract", destErr)
 		return false
 	}
+	defer dest.Close()
+
+	// pipe zip to disk
 	dlog.Println("Write executable file", updateFullPath)
 	io.Copy(dest, src)
 
