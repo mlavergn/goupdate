@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.5.1"
+const Version = "0.5.2"
 
 // DEBUG flag
 const DEBUG = false
@@ -437,11 +437,14 @@ func (id *Update) Update(current *SemanticVersion, release *GitHubRelease) bool 
 		log.Println("Update.Update failed to extract", destErr)
 		return false
 	}
-	defer dest.Close()
 
 	// pipe zip to disk
 	dlog.Println("Write executable file", updateFullPath)
 	io.Copy(dest, src)
+
+	// sync and close
+	dest.Sync()
+	dest.Close()
 
 	// make file executable
 	dlog.Println("Update.Update set executable flag", updateFullPath)
