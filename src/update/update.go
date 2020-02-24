@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.5.4"
+const Version = "0.5.5"
 
 // DEBUG flag
 const DEBUG = false
@@ -73,8 +73,9 @@ type SemanticVersion struct {
 
 // NewSemanticVersion export
 func NewSemanticVersion(version string) *SemanticVersion {
-	ver := strings.TrimLeft(version, " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.")
-	ver = strings.TrimRight(ver, " -abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	ver := strings.ToUpper(version)
+	ver = strings.TrimLeft(version, " ABCDEFGHIJKLMNOPQRSTUVWXYZ.")
+	ver = strings.TrimRight(ver, " -ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	parts := strings.Split(ver, ".")
 	if len(parts) < 3 {
 		return nil
@@ -497,13 +498,13 @@ func (id *Update) RemoveVersion(version *SemanticVersion) {
 
 // AutoUpdate export
 func (id *Update) AutoUpdate(current *SemanticVersion, interval time.Duration, restartFunc func(release *SemanticVersion)) {
-	dlog.Println("Update.AutoUpdate", *current, interval)
-
+	log.Println("Update.AutoUpdate", *current, interval)
 	ticker := time.NewTicker(interval)
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
+				log.Println("auto-update update check for", current.FullName())
 				release := id.Check(current)
 				if release != nil {
 					log.Println("auto-update new version available", release.SemanticVersion.FullName())
