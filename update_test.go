@@ -9,7 +9,7 @@ import (
 func TestSemanticVersionFullPath(t *testing.T) {
 	version := NewSemanticVersion("1.0.0")
 	actual := version.FullPath()
-	expect := "/update.test-1.0.0"
+	expect := "/goupdate.test-1.0.0"
 	if !strings.HasSuffix(actual, expect) {
 		t.Fatal("FullPath unexpected result", actual, expect)
 	}
@@ -18,7 +18,7 @@ func TestSemanticVersionFullPath(t *testing.T) {
 func TestSemanticVersionPlatformArchiveName(t *testing.T) {
 	version := NewSemanticVersion("1.0.0")
 	actual := version.PlatformArchiveName()
-	expect := "update.test-" + runtime.GOOS + "-" + runtime.GOARCH + ".zip"
+	expect := "goupdate.test-" + runtime.GOOS + "-" + runtime.GOARCH + ".zip"
 	if actual != expect {
 		t.Fatal("PlatformArchiveName unexpected result", actual, expect)
 	}

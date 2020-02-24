@@ -8,22 +8,22 @@
 
 .PHONY: test
 
-VERSION := 0.5.5
+VERSION := 0.6.0
 
 ver:
-	@sed -i '' 's/^const Version = "[0-9]\{1,3\}.[0-9]\{1,3\}.[0-9]\{1,3\}"/const Version = "${VERSION}"/' src/update/update.go
+	@sed -i '' 's/^const Version = "[0-9]\{1,3\}.[0-9]\{1,3\}.[0-9]\{1,3\}"/const Version = "${VERSION}"/' update.go
 
 lint:
-	$(shell go env GOPATH)/bin/golint ./src/...
+	$(shell go env GOPATH)/bin/golint ./...
 
 fmt:
-	go fmt ./src/...
+	go fmt ./...
 
 vet:
-	go vet ./src/...
+	go vet ./...
 
 build:
-	go build -v ./src/...
+	go build -v ./...
 
 clean:
 	go clean ...
@@ -32,7 +32,7 @@ demo: build
 	go build -o demo cmd/demo.go
 
 test: build
-	go test -v -count=1 ./src/...
+	go test -v -count=1 ./...
 
 github:
 	open "https://github.com/mlavergn/goupdate"
@@ -48,6 +48,6 @@ package:
 	open "https://github.com/mlavergn/goupdate/releases"
 
 release:
-	zip -r goupdate.zip LICENSE README.md Makefile cmd src
+	zip -r goupdate.zip LICENSE README.md Makefile cmd *.go go.mod
 	hub release create -m "${VERSION} - Go Update" -a goupdate.zip -t master "v${VERSION}"
 	open "https://github.com/mlavergn/goupdate/releases"

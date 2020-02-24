@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/mlavergn/goupdate/src/update"
+	update "github.com/mlavergn/goupdate"
 )
 
 // Version export
@@ -15,7 +15,7 @@ func check(updater *update.Update, current *update.SemanticVersion) {
 	release := updater.Check(current)
 	if release != nil {
 		result := updater.Update(current, release)
-		log.Println("Udpated, restart required", result)
+		log.Println("Updated, restart required", result)
 	}
 
 }

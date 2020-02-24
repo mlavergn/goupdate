@@ -24,7 +24,7 @@ import (
 // init
 
 // Version export
-const Version = "0.5.5"
+const Version = "0.6.0"
 
 // DEBUG flag
 const DEBUG = false
@@ -225,7 +225,7 @@ func NewGitHubEnterpriseUpdate(host string, owner string, project string, token 
 	return id
 }
 
-// TLS intialization is expensive and can be reused safely
+// TLS initialization is expensive and can be reused safely
 func (id *Update) initTLS() {
 	dlog.Println("Update.initTLS")
 	id.tlsConfigOnce.Do(func() {
