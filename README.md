@@ -27,7 +27,7 @@ The file is extracted, copied to the location of the currently running executabl
 Refering to the included demo, the application currently offers the following public APIs:
 
 ```golang
-    import "github.com/mlavergn/goupdate/src/update"
+    import "github.com/mlavergn/goupdate/"
 
     currentVersion := "1.0.0"
     url : = "https://api.github.com/repos/mlavergn/godaemon/releases/latest"
